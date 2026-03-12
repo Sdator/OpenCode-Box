@@ -1,0 +1,53 @@
+name: BunCode-AI 自动化测试
+
+on:
+  - push
+  - pull_request
+  - workflow_dispatch
+
+# 消除 Node.js 20 警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取源代码
+        uses: actions/checkout@v4
+
+      - name: 构建 Docker 镜像
+        run: docker build -t buncode-ai:test .
+
+      # --- 第一阶段：安装验证 ---
+      - name: 第一阶段-验证安装是否成功
+        run: |
+          echo "正在检查 opencode 命令位置..."
+          docker run --rm buncode-ai:test which opencode
+          echo "正在检查程序版本..."
+          docker run --rm buncode-ai:test --version
+
+      # --- 第二阶段：Web 服务测试 ---
+      - name: 第二阶段-验证服务是否可访问
+        run: |
+          echo "正在启动后台服务..."
+          docker run -d --name app-instance -p 8086:8086 buncode-ai:test
+
+          echo "等待服务启动 (最多等待 20 秒)..."
+          # 循环 10 次，每次睡 2 秒
+          for i in {1..10}; do
+            if curl -s -f http://localhost:8086 > /dev/null; then
+              echo "✅ 服务已在线！"
+              exit 0
+            fi
+            echo "尝试连接中... ($i/10)"
+            sleep 2
+          done
+
+          echo "❌ 失败：服务在 20 秒内未响应"
+          docker logs app-instance
+          exit 1
+
+      - name: 资源清理
+        if: always()
+        run: docker rm -f app-instance 2>/dev/null || true
